@@ -1,0 +1,17 @@
+[package]
+name = "creek"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "creek"
+path = "src/lib.rs"
+
+[features]
+default = ["desktop"]
+desktop = ["winit"]
+embedded = []
+
+[dependencies]
+# winit can be optional
+winit = { version = "0.28", optional = true }
