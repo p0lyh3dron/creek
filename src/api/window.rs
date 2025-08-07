@@ -1,4 +1,4 @@
-//! This module provides the API for Creek's functionality.
+//! This module provides the Window API.
 //!
 //! It allows abstraction over desktop and embedded environments
 //! using conditional compilation and a unified API trait.

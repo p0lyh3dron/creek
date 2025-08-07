@@ -1,5 +1,2 @@
-#[cfg(feature = "desktop")]
-pub mod desktop;
-
-#[cfg(feature = "embedded")]
-pub mod embedded;
+pub mod graphics;
+pub mod window;
