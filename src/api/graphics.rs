@@ -13,6 +13,9 @@ pub trait Graphics {
     where
         Self: Sized;
 
+    /// Test some stuff.
+    fn test(&self);
+
     /// Begins rendering a new frame.
     fn begin_frame(&mut self);
 

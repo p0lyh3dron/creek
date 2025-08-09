@@ -17,5 +17,5 @@ lua = ["mlua"]
 [dependencies]
 # winit can be optional
 winit = { version = "0.28", optional = true }
-ash = { version = "0.37", optional = true }
+ash = { version = "0.38", optional = true }
 mlua = { version = "0.9", features = ["luajit"], optional = true }
