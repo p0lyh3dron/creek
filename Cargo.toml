@@ -9,13 +9,14 @@ path = "src/lib.rs"
 
 [features]
 default = ["desktop"]
-desktop = ["winit", "vulkan", "lua"]
+desktop = ["vulkan", "lua"]
 embedded = []
-vulkan = ["ash"]
+vulkan = ["vulkano", "winit"]
 lua = ["mlua"]
 
 [dependencies]
-# winit can be optional
-winit = { version = "0.28", optional = true }
-ash = { version = "0.38", optional = true }
 mlua = { version = "0.9", features = ["luajit"], optional = true }
+png = "0.17.16"
+raw-window-handle = "0.6.2"
+vulkano = { version = "0.35.2", optional = true }
+winit = {version = "0.30", optional = true}
