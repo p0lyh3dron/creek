@@ -1,10 +1,12 @@
 fn load_backend(name: &str) -> Box<dyn ScriptBackend> {
     match name {
         "dummy" => crate::backends::scripts_dummy::boxed(),
+        #[cfg(feature = "luajit")]
+        "lua" => crate::backends::scripts_lua::boxed(),
         _ => panic!("unknown script backend: {}", name),
     }
 }
-pub trait ScriptBackend: Send {
+pub trait ScriptBackend {
     fn name(&self) -> &str;
     fn exec(&mut self, code: &str) -> Result<(), String>;
 }
