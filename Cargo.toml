@@ -3,20 +3,8 @@ name = "creek"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "creek"
-path = "src/lib.rs"
-
 [features]
-default = ["desktop"]
-desktop = ["vulkan", "lua"]
-embedded = []
-vulkan = ["vulkano", "winit"]
-lua = ["mlua"]
+luajit = ["mlua"]
 
 [dependencies]
-mlua = { version = "0.9", features = ["luajit"], optional = true }
-png = "0.17.16"
-raw-window-handle = "0.6.2"
-vulkano = { version = "0.35.2", optional = true }
-winit = {version = "0.30", optional = true}
+mlua = { version = "0.9", optional = true, features = ["luajit"] }

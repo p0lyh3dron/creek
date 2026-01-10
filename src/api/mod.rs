@@ -1,5 +1,3 @@
-pub mod graphics;
-pub mod scripting;
+pub mod scripts;
 
-pub use graphics::Graphics;
-pub use scripting::ScriptingEngine;
+pub use scripts::*;
