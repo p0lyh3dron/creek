@@ -1,20 +1,20 @@
 use crate::api::scripts::ScriptBackend;
 
-pub struct DummyBackend {
+pub struct DummyScriptsBackend {
 
 }
 
 pub fn boxed() -> Box<dyn ScriptBackend> {
-    Box::new(DummyBackend::new())
+    Box::new(DummyScriptsBackend::new())
 }
 
-impl DummyBackend {
+impl DummyScriptsBackend {
     pub fn new() -> Self {
         Self {}
     }
 }
 
-impl ScriptBackend for DummyBackend {
+impl ScriptBackend for DummyScriptsBackend {
     fn name(&self) -> &str {
         "dummy"
     }
