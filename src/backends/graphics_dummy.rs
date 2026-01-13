@@ -18,4 +18,8 @@ impl GraphicsBackend for DummyGraphicsBackend {
     fn name(&self) -> &str {
         "dummy"
     }
+
+    fn init(&mut self) {
+        println!("initialized dummy graphics backend");
+    }
 }

@@ -1,11 +1,14 @@
 fn load_backend(name: &str) -> Box<dyn GraphicsBackend> {
     match name {
         "dummy" => crate::backends::graphics_dummy::boxed(),
+        #[cfg(feature = "vulkan")]
+        "vulkan" => crate::backends::graphics_vulkan::boxed(),
         _ => panic!("unknown graphics backend: {}", name),
     }
 }
 pub trait GraphicsBackend {
     fn name(&self) -> &str;
+    fn init(&mut self);
 }
 
 pub struct Graphics {
@@ -20,4 +23,8 @@ impl Graphics {
     pub fn swap_backend(&mut self, name: &str) {
         self.backend = load_backend(name);
     }
+
+    pub fn init(&mut self) {
+        self.backend.init();
+    }   
 }
