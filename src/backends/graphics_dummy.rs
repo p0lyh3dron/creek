@@ -22,4 +22,8 @@ impl GraphicsBackend for DummyGraphicsBackend {
     fn init(&mut self) {
         println!("initialized dummy graphics backend");
     }
+
+    fn update(&mut self) {
+        // do nothing
+    }
 }

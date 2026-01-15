@@ -9,6 +9,7 @@ fn load_backend(name: &str) -> Box<dyn GraphicsBackend> {
 pub trait GraphicsBackend {
     fn name(&self) -> &str;
     fn init(&mut self);
+    fn update(&mut self);
 }
 
 pub struct Graphics {
@@ -26,5 +27,9 @@ impl Graphics {
 
     pub fn init(&mut self) {
         self.backend.init();
-    }   
+    }
+
+    pub fn update(&mut self) {
+        self.backend.update();
+    }
 }
