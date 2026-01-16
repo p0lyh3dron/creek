@@ -5,8 +5,10 @@ use std::mem;
 use std::mem::{align_of, size_of, size_of_val}; // TODO: Remove when bumping MSRV to 1.80
 use std::os::raw::c_void;
 
+use ash::qcom::rotated_copy_commands;
 use ash::util::*;
 use ash::vk;
+use mlua::IntoLua;
 
 use std::{
     borrow::Cow, cell::RefCell, ffi, ops::Drop, os::raw::c_char,
@@ -38,11 +40,29 @@ struct Vertex {
 }
 
 #[derive(Clone, Debug, Copy)]
-pub struct Vector3 {
+pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
-    pub _pad: f32,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct Mat4 {
+    pub data: [[f32; 4]; 4],
+}
+
+pub fn mat4_mul(a: &Mat4, b: &Mat4) -> Mat4 {
+    let mut result = Mat4 {
+        data: [[0.0; 4]; 4],
+    };
+    for i in 0..4 {
+        for j in 0..4 {
+            for k in 0..4 {
+                result.data[i][j] += a.data[i][k] * b.data[k][j];
+            }
+        }
+    }
+    result
 }
 
 pub struct VulkanBackend {
@@ -94,10 +114,14 @@ pub struct VulkanBackend {
     pub index_buffer_data: [u32; 6],
     pub viewports: [vk::Viewport; MAX_FRAME_LATENCY],
     pub scissors: [vk::Rect2D; MAX_FRAME_LATENCY],
+
+    pub uniform_ptr: *mut c_void,
+    pub uniform_color_buffer_memory_req: vk::MemoryRequirements,
+    pub i: f32,
 }
 
 pub fn boxed() -> Box<dyn GraphicsBackend> {
-    Box::new(VulkanBackend::new(640, 480).unwrap())
+    Box::new(VulkanBackend::new(256, 192).unwrap())
 }
 
 #[macro_export]
@@ -710,11 +734,13 @@ impl VulkanBackend {
             .bind_buffer_memory(vertex_input_buffer, vertex_input_buffer_memory, 0)
             .unwrap();
 
-        let uniform_color_buffer_data = Vector3 {
-            x: 1.0,
-            y: 1.0,
-            z: 1.0,
-            _pad: 0.0,
+        let uniform_color_buffer_data = Mat4 {
+            data: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
         };
         let uniform_color_buffer_info = vk::BufferCreateInfo {
             size: size_of_val(&uniform_color_buffer_data) as u64,
@@ -752,11 +778,11 @@ impl VulkanBackend {
             .unwrap();
         let mut uniform_aligned_slice = Align::new(
             uniform_ptr,
-            align_of::<Vector3>() as u64,
+            align_of::<Mat4>() as u64,
             uniform_color_buffer_memory_req.size,
         );
         uniform_aligned_slice.copy_from_slice(&[uniform_color_buffer_data]);
-        device.unmap_memory(uniform_color_buffer_memory);
+        //device.unmap_memory(uniform_color_buffer_memory);
         device
             .bind_buffer_memory(uniform_color_buffer, uniform_color_buffer_memory, 0)
             .unwrap();
@@ -972,7 +998,7 @@ impl VulkanBackend {
             vk::DescriptorSetLayoutBinding {
                 descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
                 descriptor_count: 1,
-                stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                stage_flags: vk::ShaderStageFlags::VERTEX,
                 ..Default::default()
             },
             vk::DescriptorSetLayoutBinding {
@@ -1173,6 +1199,8 @@ impl VulkanBackend {
 
         let graphic_pipeline = graphics_pipelines[0];
 
+        let i = 0.0;
+
         Ok(Self { 
             event_loop: RefCell::new(event_loop),
             frame_index: RefCell::new(0),
@@ -1214,12 +1242,35 @@ impl VulkanBackend {
             index_buffer_data,
             viewports,
             scissors,
+            uniform_ptr,
+            uniform_color_buffer_memory_req,
+            i,
         })
         }
     }
 
     pub fn render_loop<F: Fn(usize)>(&self, f: F) -> Result<(), impl Error> {
+        let now = std::time::Instant::now();
         self.event_loop.borrow_mut().run_on_demand(|event, elwp| {
+            unsafe {
+                let idx = now.elapsed().as_millis() as f32 / 200.0;
+                let uniform_color_buffer_data = world_matrix(Vec3 {
+                        x: 3.0*idx.sin(),
+                        y: 0.5*idx.cos(),
+                        z: 3.0*idx.cos(),
+                    }, Vec3 {
+                        x: 0.0,
+                        y: -idx,
+                        z: 0.0,
+                    });
+                    
+                let mut uniform_aligned_slice = Align::new(
+                    self.uniform_ptr,
+                    align_of::<Mat4>() as u64,
+                    self.uniform_color_buffer_memory_req.size,
+                );
+                uniform_aligned_slice.copy_from_slice(&[uniform_color_buffer_data]);
+            }
             elwp.set_control_flow(ControlFlow::Poll);
             match event {
                 Event::WindowEvent {
@@ -1262,6 +1313,64 @@ impl VulkanBackend {
     }
 }
 
+pub fn world_matrix(pos: Vec3, rot: Vec3) -> Mat4 {
+    let fov = 90.0f32.to_radians();
+    let aspect_ratio = 800.0 / 600.0;
+    let f = 1.0 / (fov / 2.0).tan();
+    let near = 0.1;
+    let far = 100.0;
+
+    let translation_matrix = Mat4 {
+        data: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [pos.x, pos.y, pos.z, 1.0],
+        ]
+    };
+
+    let rotation_matrix_x = Mat4 {
+        data: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, rot.x.cos(), rot.x.sin(), 0.0],
+            [0.0, -rot.x.sin(), rot.x.cos(), 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+
+    let rotation_matrix_y = Mat4 {
+        data: [
+            [rot.y.cos(), 0.0, -rot.y.sin(), 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [rot.y.sin(), 0.0, rot.y.cos(), 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+
+    let rotation_matrix_z = Mat4 {
+        data: [
+            [rot.z.cos(), rot.z.sin(), 0.0, 0.0],
+            [-rot.z.sin(), rot.z.cos(), 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+
+    let rotation_matrix = mat4_mul(&rotation_matrix_z, &mat4_mul(&rotation_matrix_y, &rotation_matrix_x));
+
+    let projection_matrix = Mat4 {
+        data: [
+            [f/aspect_ratio, 0.0, 0.0, 0.0],
+            [0.0, f, 0.0, 0.0],
+            [0.0, 0.0, -(far + near) / (near - far), 1.0],
+            [0.0, 0.0, -2.0*far*near/(far-near), 0.0],
+        ]
+    };
+
+    mat4_mul(&translation_matrix, &mat4_mul(&rotation_matrix, &projection_matrix))
+}
+
+
 impl GraphicsBackend for VulkanBackend {
     fn name(&self) -> &str {
         "vulkan"
@@ -1292,7 +1401,7 @@ impl GraphicsBackend for VulkanBackend {
                 let clear_values = [
                     vk::ClearValue {
                         color: vk::ClearColorValue {
-                            float32: [0.0, 0.0, 0.0, 0.0],
+                            float32: [0.1, 0.1, 0.1, 0.0],
                         },
                     },
                     vk::ClearValue {
