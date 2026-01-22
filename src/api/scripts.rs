@@ -6,7 +6,7 @@ fn load_backend(name: &str) -> Box<dyn ScriptBackend> {
         _ => panic!("unknown script backend: {}", name),
     }
 }
-pub trait ScriptBackend {
+pub trait ScriptBackend: Send + Sync {
     fn name(&self) -> &str;
     fn exec(&mut self, code: &str) -> Result<(), String>;
 }

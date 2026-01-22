@@ -11,5 +11,5 @@ vulkan = ["ash", "ash-window", "image", "winit"]
 ash = { version = "0.38.0", optional = true, default-features = false, features = ["linked", "debug", "std"] }
 ash-window = { version = "0.13.0", optional = true }
 image = { version = "0.25.9", optional = true, default-features = false, features = ["png"] }
-mlua = { version = "0.9", optional = true, features = ["luajit"] }
+mlua = { version = "0.9", optional = true, features = ["luajit", "send"] }
 winit = { version = "0.30.12", optional = true, features = ["rwh_06"] }
