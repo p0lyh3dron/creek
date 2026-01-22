@@ -1,10 +1,10 @@
-use crate::api::graphics::GraphicsBackend;
+use crate::api::io::IOBackend;
 
 pub struct DummyGraphicsBackend {
 
 }
 
-pub fn boxed() -> Box<dyn GraphicsBackend> {
+pub fn boxed() -> Box<dyn IOBackend> {
     Box::new(DummyGraphicsBackend::new())
 }
 
@@ -14,16 +14,12 @@ impl DummyGraphicsBackend {
     }
 }
 
-impl GraphicsBackend for DummyGraphicsBackend {
+impl IOBackend for DummyGraphicsBackend {
     fn name(&self) -> &str {
         "dummy"
     }
 
     fn init(&mut self) {
         println!("initialized dummy graphics backend");
-    }
-
-    fn update(&mut self) {
-        // do nothing
     }
 }

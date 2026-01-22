@@ -1,22 +1,21 @@
-fn load_backend(name: &str) -> Box<dyn GraphicsBackend> {
+fn load_backend(name: &str) -> Box<dyn IOBackend> {
     match name {
-        "dummy" => crate::backends::graphics_dummy::boxed(),
+        "dummy" => crate::backends::io_dummy::boxed(),
         #[cfg(feature = "vulkan")]
-        "vulkan" => crate::backends::graphics_vulkan::boxed(),
+        "vulkan" => crate::backends::io_vulkanwinit::boxed(),
         _ => panic!("unknown graphics backend: {}", name),
     }
 }
-pub trait GraphicsBackend {
+pub trait IOBackend {
     fn name(&self) -> &str;
     fn init(&mut self);
-    fn update(&mut self);
 }
 
-pub struct Graphics {
-    backend: Box<dyn GraphicsBackend>,
+pub struct IO {
+    backend: Box<dyn IOBackend>,
 }
 
-impl Graphics {
+impl IO {
     pub fn new(name: &str) -> Self {
         Self { backend: load_backend(name) }
     }
@@ -27,9 +26,5 @@ impl Graphics {
 
     pub fn init(&mut self) {
         self.backend.init();
-    }
-
-    pub fn update(&mut self) {
-        self.backend.update();
     }
 }

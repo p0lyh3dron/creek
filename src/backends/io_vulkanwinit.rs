@@ -9,6 +9,7 @@ use ash::qcom::rotated_copy_commands;
 use ash::util::*;
 use ash::vk;
 use mlua::IntoLua;
+use winit::event_loop;
 
 use std::{
     borrow::Cow, cell::RefCell, ffi, ops::Drop, os::raw::c_char,
@@ -21,15 +22,16 @@ use ash::{
 };
 
 use winit::{
+    application::ApplicationHandler,
     event::{ElementState, Event, KeyEvent, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop, ActiveEventLoop},
     keyboard::{Key, NamedKey},
     platform::run_on_demand::EventLoopExtRunOnDemand,
     raw_window_handle::{HasDisplayHandle, HasWindowHandle},
-    window::WindowBuilder,
+    window::{Window, WindowId, WindowAttributes},
 };
 
-use crate::api::graphics::GraphicsBackend;
+use crate::api::io::IOBackend;
 
 pub const MAX_FRAME_LATENCY: usize = 1;
 
@@ -73,7 +75,6 @@ pub struct VulkanBackend {
     pub swapchain_loader: swapchain::Device,
     pub debug_utils_loader: debug_utils::Instance,
     pub window: winit::window::Window,
-    pub event_loop: RefCell<EventLoop<()>>,
     pub frame_index: RefCell<usize>,
     pub debug_call_back: vk::DebugUtilsMessengerEXT,
 
@@ -120,8 +121,8 @@ pub struct VulkanBackend {
     pub i: f32,
 }
 
-pub fn boxed() -> Box<dyn GraphicsBackend> {
-    Box::new(VulkanBackend::new(256, 192).unwrap())
+pub fn boxed() -> Box<dyn IOBackend> {
+    Box::new(VKWinitBackend::new())
 }
 
 #[macro_export]
@@ -222,18 +223,179 @@ pub fn find_memorytype_index(
         .map(|(index, _memory_type)| index as _)
 }
 
+struct VKWinitBackend {
+    vulkan: Option<VulkanBackend>,
+}
+
+impl IOBackend for VKWinitBackend {
+    fn name(&self) -> &str {
+        "vkwinit"
+    }
+
+    fn init(&mut self) {
+        // Initialization logic can be added here if needed
+        let event_loop = EventLoop::new().unwrap();
+
+        event_loop.run_app(self);
+    }
+}
+
+impl VKWinitBackend {
+    pub fn new() -> Self {
+        Self { vulkan: None }
+    }
+}
+
+impl ApplicationHandler for VKWinitBackend {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.vulkan = Some(VulkanBackend::new(256, 192, event_loop).unwrap());
+    }
+
+    fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            window_id: winit::window::WindowId,
+            event: WindowEvent,
+        ) {
+            unsafe {
+            match event {
+                WindowEvent::CloseRequested => { event_loop.exit(); }
+                WindowEvent::RedrawRequested => {
+                    let v = self.vulkan.as_mut().unwrap();
+                    let mut frame_index = v.frame_index.borrow_mut();
+
+                    // The fence from 3 frames ago, that will also be signaled this frame
+                    let draw_commands_reuse_fence =
+                        v.draw_commands_reuse_fences[*frame_index % MAX_FRAME_LATENCY];
+                    unsafe {
+                        v.device.wait_for_fences(&[draw_commands_reuse_fence], true, u64::MAX)
+                    }
+                    .expect("Wait for fence failed.");
+
+                    unsafe { v.device.reset_fences(&[draw_commands_reuse_fence]) }
+                        .expect("Reset fences failed.");
+
+                    let f = |frame_index| {
+                        let present_complete_semaphore =
+                            v.present_complete_semaphores[frame_index % MAX_FRAME_LATENCY];
+                        let draw_commands_reuse_fence =
+                        v.draw_commands_reuse_fences[frame_index % MAX_FRAME_LATENCY];
+                        let draw_command_buffer = v.draw_command_buffers[frame_index % MAX_FRAME_LATENCY];
+        
+                        let (present_index, _) = v.swapchain_loader
+                            .acquire_next_image(
+                                v.swapchain,
+                                u64::MAX,
+                                present_complete_semaphore,
+                                vk::Fence::null(),
+                            )
+                            .unwrap();
+                        let clear_values = [
+                            vk::ClearValue {
+                                color: vk::ClearColorValue {
+                                    float32: [0.1, 0.1, 0.1, 0.0],
+                                },
+                            },
+                            vk::ClearValue {
+                                depth_stencil: vk::ClearDepthStencilValue {
+                                    depth: 1.0,
+                                    stencil: 0,
+                                },
+                            },
+                        ];
+        
+                        let rendering_complete_semaphore =
+                            v.rendering_complete_semaphores[present_index as usize];
+        
+                        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
+                            .render_pass(v.renderpass)
+                            .framebuffer(v.framebuffers[present_index as usize])
+                            .render_area(v.surface_resolution.into())
+                            .clear_values(&clear_values);
+        
+                        record_submit_commandbuffer(
+                            &v.device,
+                            draw_command_buffer,
+                            draw_commands_reuse_fence,
+                            v.present_queue,
+                            &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
+                            &[present_complete_semaphore],
+                            &[rendering_complete_semaphore],
+                            |device, draw_command_buffer| {
+                                device.cmd_begin_render_pass(
+                                    draw_command_buffer,
+                                    &render_pass_begin_info,
+                                    vk::SubpassContents::INLINE,
+                                );
+                                device.cmd_bind_descriptor_sets(
+                                    draw_command_buffer,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    v.pipeline_layout,
+                                    0,
+                                    &v.descriptor_sets[..],
+                                    &[],
+                                );
+                                device.cmd_bind_pipeline(
+                                    draw_command_buffer,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    v.graphic_pipeline,
+                                );
+                                device.cmd_set_viewport(draw_command_buffer, 0, &v.viewports);
+                                device.cmd_set_scissor(draw_command_buffer, 0, &v.scissors);
+                                device.cmd_bind_vertex_buffers(
+                                    draw_command_buffer,
+                                    0,
+                                    &[v.vertex_input_buffer],
+                                    &[0],
+                                );
+                                device.cmd_bind_index_buffer(
+                                    draw_command_buffer,
+                                    v.index_buffer,
+                                    0,
+                                    vk::IndexType::UINT32,
+                                );
+                                device.cmd_draw_indexed(
+                                    draw_command_buffer,
+                                    v.index_buffer_data.len() as u32,
+                                    1,
+                                    0,
+                                    0,
+                                    1,
+                                );
+                                // Or draw without the index buffer
+                                // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
+                                device.cmd_end_render_pass(draw_command_buffer);
+                            },
+                        );
+                        let present_info = vk::PresentInfoKHR {
+                            wait_semaphore_count: 1,
+                            p_wait_semaphores: &rendering_complete_semaphore,
+                            swapchain_count: 1,
+                            p_swapchains: &v.swapchain,
+                            p_image_indices: &present_index,
+                            ..Default::default()
+                        };
+                        v.swapchain_loader
+                            .queue_present(v.present_queue, &present_info)
+                            .unwrap();
+                    };
+
+                    f(*frame_index);
+                    *frame_index += 1;
+                }
+                _ => (),
+            }
+        }
+    }
+}
+
 impl VulkanBackend {
-    pub fn new(window_width: u32, window_height: u32) -> Result<Self, Box<dyn Error>> {
+    pub fn new(window_width: u32, window_height: u32, event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
         unsafe {
-            let event_loop = EventLoop::new()?;
-            let window = WindowBuilder::new()
-                .with_title("Ash - Example")
-                .with_inner_size(winit::dpi::LogicalSize::new(
-                    f64::from(window_width),
-                    f64::from(window_height),
-                ))
-                .build(&event_loop)
-                .unwrap();
+            let attributes: WindowAttributes = Window::default_attributes()
+                .with_title("Vulkan Triangle")
+                .with_inner_size(winit::dpi::PhysicalSize::new(window_width, window_height));
+            let window = event_loop.create_window(attributes)?;
             let entry = Entry::linked();
             let app_name = c"VulkanTriangle";
 
@@ -1202,7 +1364,6 @@ impl VulkanBackend {
         let i = 0.0;
 
         Ok(Self { 
-            event_loop: RefCell::new(event_loop),
             frame_index: RefCell::new(0),
             entry,
             instance,
@@ -1247,69 +1408,6 @@ impl VulkanBackend {
             i,
         })
         }
-    }
-
-    pub fn render_loop<F: Fn(usize)>(&self, f: F) -> Result<(), impl Error> {
-        let now = std::time::Instant::now();
-        self.event_loop.borrow_mut().run_on_demand(|event, elwp| {
-            unsafe {
-                let idx = now.elapsed().as_millis() as f32 / 200.0;
-                let uniform_color_buffer_data = world_matrix(Vec3 {
-                        x: 3.0*idx.sin(),
-                        y: 0.5*idx.cos(),
-                        z: 3.0*idx.cos(),
-                    }, Vec3 {
-                        x: 0.0,
-                        y: -idx,
-                        z: 0.0,
-                    });
-                    
-                let mut uniform_aligned_slice = Align::new(
-                    self.uniform_ptr,
-                    align_of::<Mat4>() as u64,
-                    self.uniform_color_buffer_memory_req.size,
-                );
-                uniform_aligned_slice.copy_from_slice(&[uniform_color_buffer_data]);
-            }
-            elwp.set_control_flow(ControlFlow::Poll);
-            match event {
-                Event::WindowEvent {
-                    event:
-                        WindowEvent::CloseRequested
-                        | WindowEvent::KeyboardInput {
-                            event:
-                                KeyEvent {
-                                    state: ElementState::Pressed,
-                                    logical_key: Key::Named(NamedKey::Escape),
-                                    ..
-                                },
-                            ..
-                        },
-                    ..
-                } => {
-                    elwp.exit();
-                }
-                Event::AboutToWait => {
-                    let mut frame_index = self.frame_index.borrow_mut();
-
-                    // The fence from 3 frames ago, that will also be signaled this frame
-                    let draw_commands_reuse_fence =
-                        self.draw_commands_reuse_fences[*frame_index % MAX_FRAME_LATENCY];
-                    unsafe {
-                        self.device
-                            .wait_for_fences(&[draw_commands_reuse_fence], true, u64::MAX)
-                    }
-                    .expect("Wait for fence failed.");
-
-                    unsafe { self.device.reset_fences(&[draw_commands_reuse_fence]) }
-                        .expect("Reset fences failed.");
-
-                    f(*frame_index);
-                    *frame_index += 1;
-                }
-                _ => (),
-            }
-        })
     }
 }
 
@@ -1368,126 +1466,4 @@ pub fn world_matrix(pos: Vec3, rot: Vec3) -> Mat4 {
     };
 
     mat4_mul(&translation_matrix, &mat4_mul(&rotation_matrix, &projection_matrix))
-}
-
-
-impl GraphicsBackend for VulkanBackend {
-    fn name(&self) -> &str {
-        "vulkan"
-    }
-
-    fn init(&mut self) {
-        println!("initialized vulkan graphics backend");   
-    }
-
-    fn update(&mut self) {
-        println!("updating vulkan graphics backend");
-        unsafe {
-            let _ = self.render_loop(|frame_index| {
-                let present_complete_semaphore =
-                    self.present_complete_semaphores[frame_index % MAX_FRAME_LATENCY];
-                let draw_commands_reuse_fence =
-                self.draw_commands_reuse_fences[frame_index % MAX_FRAME_LATENCY];
-                let draw_command_buffer = self.draw_command_buffers[frame_index % MAX_FRAME_LATENCY];
-
-                let (present_index, _) = self.swapchain_loader
-                    .acquire_next_image(
-                        self.swapchain,
-                        u64::MAX,
-                        present_complete_semaphore,
-                        vk::Fence::null(),
-                    )
-                    .unwrap();
-                let clear_values = [
-                    vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [0.1, 0.1, 0.1, 0.0],
-                        },
-                    },
-                    vk::ClearValue {
-                        depth_stencil: vk::ClearDepthStencilValue {
-                            depth: 1.0,
-                            stencil: 0,
-                        },
-                    },
-                ];
-
-                let rendering_complete_semaphore =
-                    self.rendering_complete_semaphores[present_index as usize];
-
-                let render_pass_begin_info = vk::RenderPassBeginInfo::default()
-                    .render_pass(self.renderpass)
-                    .framebuffer(self.framebuffers[present_index as usize])
-                    .render_area(self.surface_resolution.into())
-                    .clear_values(&clear_values);
-
-                record_submit_commandbuffer(
-                    &self.device,
-                    draw_command_buffer,
-                    draw_commands_reuse_fence,
-                    self.present_queue,
-                    &[vk::PipelineStageFlags::BOTTOM_OF_PIPE],
-                    &[present_complete_semaphore],
-                    &[rendering_complete_semaphore],
-                    |device, draw_command_buffer| {
-                        device.cmd_begin_render_pass(
-                            draw_command_buffer,
-                            &render_pass_begin_info,
-                            vk::SubpassContents::INLINE,
-                        );
-                        device.cmd_bind_descriptor_sets(
-                            draw_command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            self.pipeline_layout,
-                            0,
-                            &self.descriptor_sets[..],
-                            &[],
-                        );
-                        device.cmd_bind_pipeline(
-                            draw_command_buffer,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            self.graphic_pipeline,
-                        );
-                        device.cmd_set_viewport(draw_command_buffer, 0, &self.viewports);
-                        device.cmd_set_scissor(draw_command_buffer, 0, &self.scissors);
-                        device.cmd_bind_vertex_buffers(
-                            draw_command_buffer,
-                            0,
-                            &[self.vertex_input_buffer],
-                            &[0],
-                        );
-                        device.cmd_bind_index_buffer(
-                            draw_command_buffer,
-                            self.index_buffer,
-                            0,
-                            vk::IndexType::UINT32,
-                        );
-                        device.cmd_draw_indexed(
-                            draw_command_buffer,
-                            self.index_buffer_data.len() as u32,
-                            1,
-                            0,
-                            0,
-                            1,
-                        );
-                        // Or draw without the index buffer
-                        // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
-                        device.cmd_end_render_pass(draw_command_buffer);
-                    },
-                );
-                let present_info = vk::PresentInfoKHR {
-                    wait_semaphore_count: 1,
-                    p_wait_semaphores: &rendering_complete_semaphore,
-                    swapchain_count: 1,
-                    p_swapchains: &self.swapchain,
-                    p_image_indices: &present_index,
-                    ..Default::default()
-                };
-                self.swapchain_loader
-                    .queue_present(self.present_queue, &present_info)
-                    .unwrap();
-            });
-            self.device.device_wait_idle().unwrap();
-        }
-    }
 }
