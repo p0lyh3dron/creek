@@ -225,6 +225,7 @@ pub fn find_memorytype_index(
 
 struct VKWinitBackend {
     vulkan: Option<VulkanBackend>,
+    started: std::time::Instant,
 }
 
 impl IOBackend for VKWinitBackend {
@@ -236,19 +237,45 @@ impl IOBackend for VKWinitBackend {
         // Initialization logic can be added here if needed
         let event_loop = EventLoop::new().unwrap();
 
+        event_loop.set_control_flow(ControlFlow::Poll);
+
         event_loop.run_app(self);
     }
 }
 
 impl VKWinitBackend {
     pub fn new() -> Self {
-        Self { vulkan: None }
+        Self { vulkan: None, started: std::time::Instant::now()}
     }
 }
 
 impl ApplicationHandler for VKWinitBackend {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.vulkan = Some(VulkanBackend::new(256, 192, event_loop).unwrap());
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let v = self.vulkan.as_mut().unwrap();
+        unsafe {
+            let idx = self.started.elapsed().as_millis() as f32 / 200.0;
+            let uniform_color_buffer_data = world_matrix(Vec3 {
+                    x: 3.0*idx.sin(),
+                    y: 0.5*idx.cos(),
+                    z: 3.0*idx.cos(),
+                }, Vec3 {
+                    x: 0.0,
+                    y: -idx,
+                    z: 0.0,
+                });
+                
+            let mut uniform_aligned_slice = Align::new(
+                v.uniform_ptr,
+                align_of::<Mat4>() as u64,
+                v.uniform_color_buffer_memory_req.size,
+            );
+            uniform_aligned_slice.copy_from_slice(&[uniform_color_buffer_data]);
+        }
+        self.vulkan.as_ref().unwrap().window.request_redraw();
     }
 
     fn window_event(
