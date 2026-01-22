@@ -1,7 +1,7 @@
 fn load_backend(name: &str) -> Box<dyn ScriptBackend> {
     match name {
         "dummy" => crate::backends::scripts_dummy::boxed(),
-        #[cfg(feature = "luajit")]
+        #[cfg(feature = "use_luajit")]
         "lua" => crate::backends::scripts_lua::boxed(),
         _ => panic!("unknown script backend: {}", name),
     }

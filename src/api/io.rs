@@ -1,7 +1,7 @@
 fn load_backend(name: &str) -> Box<dyn IOBackend> {
     match name {
         "dummy" => crate::backends::io_dummy::boxed(),
-        #[cfg(feature = "vulkan")]
+        #[cfg(feature = "use_vulkan")]
         "vulkan" => crate::backends::io_vulkanwinit::boxed(),
         _ => panic!("unknown graphics backend: {}", name),
     }

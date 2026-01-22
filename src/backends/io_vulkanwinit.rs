@@ -251,7 +251,7 @@ impl VKWinitBackend {
 
 impl ApplicationHandler for VKWinitBackend {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.vulkan = Some(VulkanBackend::new(256, 192, event_loop).unwrap());
+        self.vulkan = Some(VulkanBackend::new(1920, 1080, event_loop).unwrap());
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
